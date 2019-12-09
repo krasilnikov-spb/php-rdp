@@ -1,14 +1,14 @@
 {
-  "name": "krasilnikov-spb/phpRdp",
+  "name": "krasilnikov-spb/php-rdp",
   "type": "library",
   "description": "PHP implementation of the Ramer-Douglas-Peucker algorithm for reducing the number of points on a polyline",
   "keywords": ["Ramer","Douglas","Peucker","polyline","simplify"],
-  "homepage": "https://github.com/krasilnikov-spb/phpRdp",
+  "homepage": "https://github.com/krasilnikov-spb/php-rdp",
   "authors": [
     {
       "name": "Alexander Krasilnikov",
       "email": "alexander@krasilnikov.spb.ru",
-      "homepage": "https://github.com/krasilnikov-spb/phpRdp",
+      "homepage": "https://github.com/krasilnikov-spb/php-rdp",
       "role": "Developer"
     }
   ],

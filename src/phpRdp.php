@@ -126,9 +126,37 @@ class phpRdp extends Exception
         return $angle * $earthRadius;
     }
 
-
     /**
      * RamerDouglasPeucker
+     * Do initial prepare of data and call doRamerDouglasPeucker for simplification.
+     *
+     * @param $pointList - array of track. Each value of array represents one geopoint.
+     * @return array - simplified track
+     * @throws string - in case of absence or incorrect data in path
+     */
+    function RamerDouglasPeucker($pointList)
+    {
+        $epsilon = $this->epsilon;
+        $pointList_short = [];
+        foreach ($pointList as $key => $point) {
+            list($lat, $lon) = self::convertLatLonToAbsKm(
+                self::getCoordFromArrayValue($point, "lat"),
+                self::getCoordFromArrayValue($point, "lon")
+            );
+            $pointList_short[$key] = ['lat' => $lat, 'lon' => $lon, 'key' => $key];
+        }
+        $pointList_short = self::doRamerDouglasPeucker($pointList_short, $epsilon);
+
+        $pointList_new=[];
+        foreach ($pointList_short as $foo => $point){
+            $pointList_new[] = $pointList[$point['key']];
+        }
+
+        return $pointList_new;
+    }
+
+    /**
+     * doRamerDouglasPeucker
      * Reduces the number of points on a polyline by removing those that are closer to the line
      * than the distance $epsilon.
      * It is assumed that the coordinates and distance $epsilon are given in the same units.
@@ -141,30 +169,17 @@ class phpRdp extends Exception
      * @return array - simplified track
      * @throws string - in case of absence or incorrect data in path
      */
-    function RamerDouglasPeucker($pointList, $epsilon)
+    private function doRamerDouglasPeucker($pointList, $epsilon)
     {
         // Find the point with the maximum distance
         $dmax = 0;
         $index = 0;
         $totalPoints = count($pointList);
         for ($i = 1; $i < ($totalPoints - 1); $i++) {
-            list($lat_i, $lon_i) = self::convertLatLonToAbsKm(
-                self::getCoordFromArrayValue($pointList[$i], "lat"),
-                self::getCoordFromArrayValue($pointList[$i], "lon")
-            );
-            list($lat_0, $lon_0) = self::convertLatLonToAbsKm(
-                self::getCoordFromArrayValue($pointList[0], "lat"),
-                self::getCoordFromArrayValue($pointList[0], "lon")
-            );
-            list($lat_lp, $lon_lp) = self::convertLatLonToAbsKm(
-                self::getCoordFromArrayValue($pointList[$totalPoints - 1], "lat"),
-                self::getCoordFromArrayValue($pointList[$totalPoints - 1], "lon")
-            );
 
-
-            $d = self::perpendicularDistance($lat_i, $lon_i,
-                $lat_0, $lon_0,
-                $lat_lp, $lon_lp);
+            $d = self::perpendicularDistance($pointList[$i]["lat"], $pointList[$i]["lon"],
+                $pointList[0]["lat"], $pointList[0]["lon"],
+                $pointList[$totalPoints - 1]["lat"], $pointList[$totalPoints - 1]["lon"]);
 
             if ($d > $dmax) {
                 $index = $i;
@@ -175,8 +190,8 @@ class phpRdp extends Exception
         // If max distance is greater than epsilon, recursively simplify
         if ($dmax >= $epsilon) {
             // Recursive call
-            $recResults1 = self::RamerDouglasPeucker(array_slice($pointList, 0, $index + 1), $epsilon);
-            $recResults2 = self::RamerDouglasPeucker(array_slice($pointList, $index, $totalPoints - $index), $epsilon);
+            $recResults1 = self::doRamerDouglasPeucker(array_slice($pointList, 0, $index + 1), $epsilon);
+            $recResults2 = self::doRamerDouglasPeucker(array_slice($pointList, $index, $totalPoints - $index), $epsilon);
 
             // Build the result list
             $resultList = array_merge(array_slice($recResults1, 0, count($recResults1) - 1),

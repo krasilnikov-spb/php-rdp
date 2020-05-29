@@ -31,6 +31,17 @@ $simplified_track = $rdp->RamerDouglasPeucker($track);
 
 You can look at working example at tests/TestSimplify.php
 
+### Filter
+
+If you need to keep some points in certain period of seconds, you may use setDatetimeFilter.
+
+This line enables filter and sets maximum distance between dots in track at 20 minutes:
+
+~~~
+$rdp->setDatetimeFilter("datetime", 20 * 60);
+~~~
+
+
 ## Authorship
 
 Based on code: http://www.loughrigg.org/rdp/ by David R. Edgar  

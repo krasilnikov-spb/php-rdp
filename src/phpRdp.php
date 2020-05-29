@@ -19,6 +19,7 @@
 namespace phpRdp;
 
 use Exception;
+use DateTime;
 
 /**
  * Class phpRdp
@@ -30,6 +31,8 @@ class phpRdp extends Exception
     private $lon_path = "";
     private $epsilon = 0;
     private $earthRadius = 0;
+    private $datetime_path = "";
+    private $seconds_between_dots = false;
 
     /**
      * phpRdp constructor.
@@ -60,30 +63,89 @@ class phpRdp extends Exception
     }
 
     /**
-     * Calculates perpendicular distance from a point to a straight line.
-     * All coordinates MUST be in the same dimensions, e.g. km.
-     * @param $ptX - x coordinate for testing point
-     * @param $ptY - y coordinate for testing point
-     * @param $l1x - x coordinate for left point
-     * @param $l1y - y coordinate for left point
-     * @param $l2x - x coordinate for right point
-     * @param $l2y - y coordinate for right point
-     * @return float
+     * Set Datetime filter parameters
+     * @param $path - set path inside each value of object for datetime using dot as separator,
+     *                                e.g. "point.datetime"
+     * @param $seconds_between_dots - filter value, in seconds.
      */
-    private function perpendicularDistance($ptX, $ptY, $l1x, $l1y, $l2x, $l2y)
+
+    function setDatetimeFilter($path, $seconds_between_dots)
     {
-        $result = 0;
-        if ($l2x == $l1x) {
-            //vertical lines - treat this case specially to avoid divide by zero
-            $result = abs($ptX - $l2x);
-        } else {
-            $slope = (($l2y - $l1y) / ($l2x - $l1x));
-            $passThroughY = (0 - $l1x) * $slope + $l1y;
-            $result = (abs(($slope * $ptX) - $ptY + $passThroughY)) / (sqrt($slope * $slope + 1));
-        }
-        return $result;
+        $this->datetime_path = $path;
+        $this->seconds_between_dots = $seconds_between_dots;
     }
 
+    /**
+     * RamerDouglasPeucker
+     * Do initial prepare of data and call doRamerDouglasPeucker for simplification.
+     *
+     * @param $pointList - array of track. Each value of array represents one geopoint.
+     * @return array - simplified track
+     * @throws string - in case of absence or incorrect data in path
+     */
+    function RamerDouglasPeucker($pointList)
+    {
+        $epsilon = $this->epsilon;
+        $pointList_short = [];
+        foreach ($pointList as $key => $point) {
+            list($lat, $lon) = self::convertLatLonToAbsKm(
+                self::getCoordFromArrayValue($point, "lat"),
+                self::getCoordFromArrayValue($point, "lon")
+            );
+            $pointList_short[$key] = ['lat' => $lat, 'lon' => $lon, 'key' => $key];
+        }
+        $pointList_short = self::doRamerDouglasPeucker($pointList_short, $epsilon);
+
+        // response array
+        $pointList_new = [];
+
+        // initial state
+        if ($this->seconds_between_dots > 0) {
+            $last_datetime = new DateTimeEnhanced(self::getCoordFromArrayValue($pointList[0], "datetime"));
+        }
+        $last_id = 0;
+        $pointList_new[] = $pointList[0];
+
+        foreach ($pointList_short as $foo => $point) {
+            if ($this->seconds_between_dots > 0) {
+                $this_datetime = new DateTimeEnhanced(self::getCoordFromArrayValue($pointList[$point['key']], "datetime"));
+
+                // if between previous dot and this one in simplified track
+                // too many seconds
+                // we need to insert some from initial track
+
+                if ($last_datetime->returnModify("+" . $this->seconds_between_dots . ' seconds') < $this_datetime) {
+                    for ($i = $last_id + 1; $i < $point['key']; $i++) {
+                        $target_datetime = new DateTimeEnhanced(self::getCoordFromArrayValue($pointList[$i], "datetime"));
+                        $target_next_datetime = new DateTimeEnhanced(self::getCoordFromArrayValue($pointList[($i + 1)], "datetime"));
+                        $border_datetime = $last_datetime->returnModify("+" . $this->seconds_between_dots . ' seconds');
+
+                        if (($target_datetime <= $border_datetime) &&
+                            ($border_datetime < $target_next_datetime)) {
+                            $last_datetime = clone $target_datetime;
+                            $last_id = $i;
+                            $pointList_new[] = $pointList[$i];
+                        }
+                    }
+                }
+            }
+
+            // insert dot from simplified track
+            // if previous dot not the same
+            if ($this->seconds_between_dots > 0 &&
+                self::getCoordFromArrayValue($pointList[$point['key']], "datetime") != self::getCoordFromArrayValue($pointList_new[count($pointList_new) - 1], "datetime")) {
+                $last_id = $point['key'];
+                $last_datetime = new DateTimeEnhanced(self::getCoordFromArrayValue($pointList[$point['key']], "datetime"));
+                $pointList_new[] = $pointList[$point['key']];
+
+            }elseif($this->seconds_between_dots == 0){
+                $pointList_new[] = $pointList[$point['key']];
+
+            }
+        }
+
+        return $pointList_new;
+    }
 
     /**
      * Convert coordinate to coordinate system relative to gps point 0,0.
@@ -127,32 +189,34 @@ class phpRdp extends Exception
     }
 
     /**
-     * RamerDouglasPeucker
-     * Do initial prepare of data and call doRamerDouglasPeucker for simplification.
-     *
-     * @param $pointList - array of track. Each value of array represents one geopoint.
-     * @return array - simplified track
+     * Extract coordinate value
+     * @param $point - array, containing all data related to one geopoint
+     * @param $coord - coordinate part: lat | lon
+     * @return float - actual value
      * @throws string - in case of absence or incorrect data in path
      */
-    function RamerDouglasPeucker($pointList)
+    private function getCoordFromArrayValue($point, $coord)
     {
-        $epsilon = $this->epsilon;
-        $pointList_short = [];
-        foreach ($pointList as $key => $point) {
-            list($lat, $lon) = self::convertLatLonToAbsKm(
-                self::getCoordFromArrayValue($point, "lat"),
-                self::getCoordFromArrayValue($point, "lon")
-            );
-            $pointList_short[$key] = ['lat' => $lat, 'lon' => $lon, 'key' => $key];
+        $path = $this->lon_path;
+        if ($coord == "lat") {
+            $path = $this->lat_path;
+        } elseif ($coord == "datetime") {
+            $path = $this->datetime_path;
         }
-        $pointList_short = self::doRamerDouglasPeucker($pointList_short, $epsilon);
+        $path_splitted = explode(".", $path);
 
-        $pointList_new=[];
-        foreach ($pointList_short as $foo => $point){
-            $pointList_new[] = $pointList[$point['key']];
+        for ($i = 0; $i < count($path_splitted) - 1; $i++) {
+            if (is_array($point[$path_splitted[$i]])) {
+                $point = $point[$path_splitted[$i]];
+            } else {
+                throw new Exception('No ' . $coord . ' path in geopoint');
+            }
         }
-
-        return $pointList_new;
+        if (array_key_exists($path_splitted[count($path_splitted) - 1], $point)) {
+            return $point[$path_splitted[count($path_splitted) - 1]];
+        } else {
+            throw new Exception('Incorrect ' . $coord . ' path in geopoint');
+        }
     }
 
     /**
@@ -204,33 +268,47 @@ class phpRdp extends Exception
         return $resultList;
     }
 
+    /**
+     * Calculates perpendicular distance from a point to a straight line.
+     * All coordinates MUST be in the same dimensions, e.g. km.
+     * @param $ptX - x coordinate for testing point
+     * @param $ptY - y coordinate for testing point
+     * @param $l1x - x coordinate for left point
+     * @param $l1y - y coordinate for left point
+     * @param $l2x - x coordinate for right point
+     * @param $l2y - y coordinate for right point
+     * @return float
+     */
+    private function perpendicularDistance($ptX, $ptY, $l1x, $l1y, $l2x, $l2y)
+    {
+        $result = 0;
+        if ($l2x == $l1x) {
+            //vertical lines - treat this case specially to avoid divide by zero
+            $result = abs($ptX - $l2x);
+        } else {
+            $slope = (($l2y - $l1y) / ($l2x - $l1x));
+            $passThroughY = (0 - $l1x) * $slope + $l1y;
+            $result = (abs(($slope * $ptX) - $ptY + $passThroughY)) / (sqrt($slope * $slope + 1));
+        }
+        return $result;
+    }
+}
+
+
+
+class DateTimeEnhanced extends DateTime
+{
 
     /**
-     * Extract coordinate value
-     * @param $point - array, containing all data related to one geopoint
-     * @param $coord - coordinate part: lat | lon
-     * @return float - actual value
-     * @throws string - in case of absence or incorrect data in path
+     * Create a copy of DateTimeEnhanced class instance and modify the datetime
+     * according to passed interval
+     * @param $interval -
+     * @return DateTimeEnhanced
      */
-    private function getCoordFromArrayValue($point, $coord)
+    public function returnModify($interval)
     {
-        $path = $this->lon_path;
-        if ($coord == "lat") {
-            $path = $this->lat_path;
-        }
-        $path_splitted = explode(".", $path);
-
-        for ($i = 0; $i < count($path_splitted) - 1; $i++) {
-            if (is_array($point[$path_splitted[$i]])) {
-                $point = $point[$path_splitted[$i]];
-            } else {
-                throw new Exception('No ' . $coord . ' path in geopoint');
-            }
-        }
-        if (array_key_exists($path_splitted[count($path_splitted) - 1], $point)) {
-            return $point[$path_splitted[count($path_splitted) - 1]];
-        } else {
-            throw new Exception('Incorrect ' . $coord . ' path in geopoint');
-        }
+        $dt = clone $this;
+        $dt->modify($interval);
+        return $dt;
     }
 }
